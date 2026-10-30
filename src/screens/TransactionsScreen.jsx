@@ -36,6 +36,46 @@ export default function TransactionsScreen({ onOpenAddTransaction }) {
   const [repayNotes, setRepayNotes] = useState('');
   const [savingRepay, setSavingRepay] = useState(false);
 
+  // Add Lent Modal State
+  const [addLentModalVisible, setAddLentModalVisible] = useState(false);
+  const [friendName, setFriendName] = useState('');
+  const [lentAmount, setLentAmount] = useState('');
+  const [lentDesc, setLentDesc] = useState('');
+  const [savingLent, setSavingLent] = useState(false);
+
+  const handleCreateLentDebt = async () => {
+    if (!friendName.trim()) {
+      Alert.alert('Validation Error', "Please enter friend's name");
+      return;
+    }
+    const paise = rupeesToPaise(lentAmount);
+    if (paise <= 0) {
+      Alert.alert('Validation Error', 'Please enter a valid amount');
+      return;
+    }
+
+    setSavingLent(true);
+    try {
+      await financeService.addDebt({
+        type: 'lent',
+        person_name: friendName.trim(),
+        original_amount_paise: paise,
+        description: lentDesc.trim(),
+      });
+      setAddLentModalVisible(false);
+      setFriendName('');
+      setLentAmount('');
+      setLentDesc('');
+      refreshAll();
+      loadTransactions();
+      Alert.alert('Success', 'Lending entry recorded and deducted from your Available Balance!');
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Failed to record entry');
+    } finally {
+      setSavingLent(false);
+    }
+  };
+
   const handleOpenRepayModal = (item) => {
     if (item.status === 'repaid') {
       Alert.alert(
@@ -96,15 +136,84 @@ export default function TransactionsScreen({ onOpenAddTransaction }) {
       if (isRefresh) setRefreshing(true);
       else setLoading(true);
 
-      const params = {
-        search: search.trim() || undefined,
-        type: filterType === 'all' ? undefined : filterType,
-        sortBy,
-        limit: 100,
-      };
+      if (filterType === 'lent') {
+        const debtsData = await financeService.getDebts('lent');
+        const debtsList = (debtsData?.debts || [])
+          .filter((d) => d.type === 'lent')
+          .map((d) => ({
+            id: d.id || d._id,
+            _id: d._id,
+            type: 'lent',
+            amount_paise: d.original_amount_paise,
+            category: 'Friend Lending',
+            subcategory: d.person_name,
+            date: d.createdAt ? d.createdAt.split('T')[0] : (d.created_at ? d.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
+            payment_method: 'Lent',
+            description: `Money Lent to ${d.person_name}${d.description ? ` (${d.description})` : ''}`,
+            notes: d.description || '',
+            status: d.status,
+            remaining_amount_paise: d.remaining_amount_paise,
+            person_name: d.person_name,
+            is_debt: true,
+            createdAt: d.createdAt || d.created_at,
+          }));
 
-      const data = await financeService.getTransactions(params);
-      setTransactions(data?.transactions || []);
+        if (search.trim()) {
+          const s = search.toLowerCase();
+          setTransactions(
+            debtsList.filter(
+              (item) =>
+                item.description.toLowerCase().includes(s) ||
+                item.subcategory.toLowerCase().includes(s)
+            )
+          );
+        } else {
+          setTransactions(debtsList);
+        }
+      } else {
+        const params = {
+          search: search.trim() || undefined,
+          type: filterType === 'all' ? undefined : filterType,
+          sortBy,
+          limit: 100,
+        };
+
+        const data = await financeService.getTransactions(params);
+        let list = data?.transactions || [];
+
+        if (filterType === 'all') {
+          try {
+            const debtsData = await financeService.getDebts('lent');
+            const debtsList = (debtsData?.debts || [])
+              .filter((d) => d.type === 'lent')
+              .map((d) => ({
+                id: d.id || d._id,
+                _id: d._id,
+                type: 'lent',
+                amount_paise: d.original_amount_paise,
+                category: 'Friend Lending',
+                subcategory: d.person_name,
+                date: d.createdAt ? d.createdAt.split('T')[0] : (d.created_at ? d.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
+                payment_method: 'Lent',
+                description: `Money Lent to ${d.person_name}${d.description ? ` (${d.description})` : ''}`,
+                notes: d.description || '',
+                status: d.status,
+                remaining_amount_paise: d.remaining_amount_paise,
+                person_name: d.person_name,
+                is_debt: true,
+                createdAt: d.createdAt || d.created_at,
+              }));
+
+            const existingIds = new Set(list.map((t) => String(t.id || t._id)));
+            const newDebts = debtsList.filter((d) => !existingIds.has(String(d.id)));
+            list = [...list, ...newDebts];
+          } catch (e) {
+            // ignore
+          }
+        }
+
+        setTransactions(list);
+      }
     } catch (err) {
       console.log('Load transactions error:', err.message);
     } finally {
@@ -329,44 +438,80 @@ export default function TransactionsScreen({ onOpenAddTransaction }) {
       </View>
 
       {/* Transactions List */}
-      {loading && !refreshing && transactions.length === 0 ? (
-        <View style={styles.loadingContainer}>
-          {[1, 2, 3, 4, 5].map((i) => (
-            <SkeletonLoader key={i} height={70} borderRadius={18} style={{ marginVertical: 6 }} />
-          ))}
-        </View>
-      ) : (
-        <FlatList
-          data={transactions}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={styles.listContent}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => loadTransactions(true)}
-              tintColor={theme.accent}
-              colors={[theme.accent]}
-            />
-          }
-          ListEmptyComponent={
-            <GlassCard style={styles.emptyCard}>
-              <Text style={styles.emptyEmoji}>🔎</Text>
-              <Text style={[styles.emptyTitle, { color: theme.text }]}>No Transactions Found</Text>
-              <Text style={[styles.emptyDesc, { color: theme.textSecondary }]}>
-                {search ? 'Try adjusting your search criteria.' : 'Start tracking by tapping below.'}
-              </Text>
-              <GlassButton
-                title="Add New Transaction"
-                onPress={() => onOpenAddTransaction('expense')}
-                variant="primary"
-                size="md"
-                style={{ marginTop: 14 }}
+      {(() => {
+        const displayList = transactions.filter((t) => {
+          if (filterType === 'all') return true;
+          if (filterType === 'lent') return t.type === 'lent' || t.is_debt;
+          return t.type === filterType;
+        });
+
+        if (loading && !refreshing && displayList.length === 0) {
+          return (
+            <View style={styles.loadingContainer}>
+              {[1, 2, 3, 4, 5].map((i) => (
+                <SkeletonLoader key={i} height={70} borderRadius={18} style={{ marginVertical: 6 }} />
+              ))}
+            </View>
+          );
+        }
+
+        return (
+          <FlatList
+            data={displayList}
+            keyExtractor={(item) => String(item.id || item._id)}
+            renderItem={renderItem}
+            contentContainerStyle={styles.listContent}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => loadTransactions(true)}
+                tintColor={theme.accent}
+                colors={[theme.accent]}
               />
-            </GlassCard>
-          }
-        />
-      )}
+            }
+            ListEmptyComponent={
+              <GlassCard style={styles.emptyCard}>
+                <Text style={styles.emptyEmoji}>
+                  {filterType === 'lent' ? '🤝' : '🔎'}
+                </Text>
+                <Text style={[styles.emptyTitle, { color: theme.text }]}>
+                  {filterType === 'lent'
+                    ? 'No Lending Records Found'
+                    : filterType === 'income'
+                    ? 'No Income Records Found'
+                    : filterType === 'expense'
+                    ? 'No Expense Records Found'
+                    : 'No Transactions Found'}
+                </Text>
+                <Text style={[styles.emptyDesc, { color: theme.textSecondary }]}>
+                  {filterType === 'lent'
+                    ? "You haven't recorded any money lent to friends yet."
+                    : search
+                    ? 'Try adjusting your search criteria.'
+                    : 'Start tracking by tapping below.'}
+                </Text>
+                <GlassButton
+                  title={
+                    filterType === 'lent'
+                      ? '+ Record Money Given to Friend'
+                      : 'Add New Transaction'
+                  }
+                  onPress={() => {
+                    if (filterType === 'lent') {
+                      setAddLentModalVisible(true);
+                    } else {
+                      onOpenAddTransaction(filterType === 'income' ? 'income' : 'expense');
+                    }
+                  }}
+                  variant="primary"
+                  size="md"
+                  style={{ marginTop: 14 }}
+                />
+              </GlassCard>
+            }
+          />
+        );
+      })()}
 
       {/* Repay Modal for Lent Record */}
       <GlassModal
@@ -408,6 +553,48 @@ export default function TransactionsScreen({ onOpenAddTransaction }) {
           }
           onPress={handleRecordRepayment}
           loading={savingRepay}
+          variant="primary"
+          size="lg"
+          style={{ marginTop: 14 }}
+        />
+      </GlassModal>
+
+      {/* Add Lent Modal directly from Activity */}
+      <GlassModal
+        visible={addLentModalVisible}
+        onClose={() => setAddLentModalVisible(false)}
+        title="Record Money Given to Friend"
+        subtitle="Deducts directly from your Available Spending Balance"
+      >
+        <GlassInput
+          label="Friend / Person Name"
+          placeholder="e.g. Rahul Sharma"
+          value={friendName}
+          onChangeText={setFriendName}
+          icon="👤"
+        />
+
+        <GlassInput
+          label="Amount Given (₹)"
+          placeholder="e.g. 1500"
+          value={lentAmount}
+          onChangeText={setLentAmount}
+          keyboardType="numeric"
+          icon="₹"
+        />
+
+        <GlassInput
+          label="Purpose / Note (Optional)"
+          placeholder="e.g. Loan for bike repair"
+          value={lentDesc}
+          onChangeText={setLentDesc}
+          icon="📝"
+        />
+
+        <GlassButton
+          title="Save & Deduct from Balance"
+          onPress={handleCreateLentDebt}
+          loading={savingLent}
           variant="primary"
           size="lg"
           style={{ marginTop: 14 }}
