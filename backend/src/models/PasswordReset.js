@@ -1,0 +1,32 @@
+const mongoose = require('mongoose');
+
+const passwordResetSchema = new mongoose.Schema(
+  {
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      index: true,
+    },
+    token_hash: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+    },
+    expires_at: {
+      type: Date,
+      required: true,
+    },
+    is_used: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
+
+module.exports = mongoose.model('PasswordReset', passwordResetSchema);
+
